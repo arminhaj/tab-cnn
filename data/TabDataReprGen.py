@@ -106,7 +106,11 @@ class TabDataReprGen:
         if self.normalize:
             data = librosa.util.normalize(data)
         if self.downsample:
-            data = librosa.resample(data, self.sr_original, self.sr_downs)
+            data = librosa.resample(
+                data,
+                orig_sr=self.sr_original,
+                target_sr=self.sr_downs
+            )
             self.sr_curr = self.sr_downs
         if self.preproc_mode == "c":
             data = np.abs(librosa.cqt(data,
