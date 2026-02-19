@@ -126,7 +126,7 @@ class TabDataReprGen:
         elif self.preproc_mode == "s":
             data = np.abs(librosa.stft(data, n_fft=self.n_fft, hop_length=self.hop_length))
         else:
-            print "invalid representation mode."
+            print ("invalid representation mode.")
 
         return data
 
@@ -143,7 +143,7 @@ class TabDataReprGen:
         # filename has no extenstion
         filename = self.get_nth_filename(n)
         num_frames = self.load_rep_and_labels_from_raw_file(filename)
-        print "done: " + filename + ", " + str(num_frames) + " frames" 
+        print ("done: " + filename + ", " + str(num_frames) + " frames")
         save_path = self.save_path
         if not os.path.exists(save_path):
             os.makedirs(save_path)
