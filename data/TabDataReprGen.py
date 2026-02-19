@@ -159,7 +159,7 @@ def main(args):
     gen.load_and_save_repr_nth_file(n)
     
 if __name__ == "__main__":
-    main(args)
+    main(sys.argv[1:])
 
 
 
