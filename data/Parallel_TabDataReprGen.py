@@ -6,7 +6,7 @@ import sys
 num_filenames = 360
 modes = ["c","m","cm","s"]
 
-filename_indices = range(num_filenames) * 4
+filename_indices = list(range(num_filenames)) * 4
 mode_list = ( 
         [modes[0]] * num_filenames 
     +   [modes[1]] * num_filenames 
