@@ -7,7 +7,12 @@ num_filenames = 360
 modes = ["c","m","cm","s"]
 
 filename_indices = range(num_filenames) * 4
-mode_list = [modes[0]] * 360 + [modes[1]] * 360 + [modes[2]] * 360 + [modes[3]] * 360 
+mode_list = ( 
+        [modes[0]] * num_filenames 
+    +   [modes[1]] * num_filenames 
+    +   [modes[2]] * num_filenames 
+    +   [modes[3]] * num_filenames
+    )
 
 
 if __name__ == "__main__":
