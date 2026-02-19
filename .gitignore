@@ -1,1 +1,4 @@
 data/GuitarSet/
+data/spec_repr
+nohup.out
+__pycache__/
