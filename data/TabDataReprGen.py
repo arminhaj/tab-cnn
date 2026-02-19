@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import numpy as np
 import jams
 from scipy.io import wavfile
@@ -10,9 +10,10 @@ class TabDataReprGen:
     
     def __init__(self, mode="c"):
         # file path to the GuitarSet dataset
-        path = "GuitarSet/"
-        self.path_audio = path + "audio/audio_mic/"
-        self.path_anno = path + "annotation/"
+        data_dir = Path("data")
+        path = data_dir / "GuitarSet"
+        self.path_audio = path / "audio" / "audio_mic"
+        self.path_anno = path / "annotation"
         
         # labeling parameters
         self.string_midi_pitches = [40,45,50,55,59,64]
@@ -43,13 +44,13 @@ class TabDataReprGen:
         self.hop_length = 512
         
         # save file path
-        self.save_path = "spec_repr/" + self.preproc_mode + "/"
+        self.save_path = data_dir / "spec_repr" / self.preproc_mode
 
     def load_rep_and_labels_from_raw_file(self, filename):
-        file_audio = self.path_audio + filename + "_mic.wav"
-        file_anno = self.path_anno + filename + ".jams"
-        jam = jams.load(file_anno)
-        self.sr_original, data = wavfile.read(file_audio)
+        file_audio = self.path_audio / f"{filename}_mic.wav"
+        file_anno = self.path_anno / f"{filename}.jams"
+        jam = jams.load(str(file_anno))
+        self.sr_original, data = wavfile.read(str(file_audio))
         self.sr_curr = self.sr_original
         
         # preprocess audio, store in output dict
@@ -134,20 +135,22 @@ class TabDataReprGen:
         np.savez(filename, **self.output)
         
     def get_nth_filename(self, n):
-        # returns the filename with no extension
-        filenames = np.sort(np.array(os.listdir(self.path_anno)))
-        filenames = filter(lambda x: x[-5:] == ".jams", filenames)
-        return filenames[n][:-5] 
+        # returns the filename from the GuitarSet/annotation directory with no
+        # file extension as a numpy array in ascending order
+        filenames = self.path_anno.glob("*.jams")
+        stems = [p.stem for p in filenames]
+        out =  np.sort(np.array(stems)) 
+        # FIXME: This was refactored, but the underlying logic is extremely
+        # inefficient.
+        return out[n]
     
     def load_and_save_repr_nth_file(self, n):
         # filename has no extenstion
         filename = self.get_nth_filename(n)
         num_frames = self.load_rep_and_labels_from_raw_file(filename)
-        print ("done: " + filename + ", " + str(num_frames) + " frames")
-        save_path = self.save_path
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-        self.save_data(save_path + filename + ".npz")
+        print(f"done: {filename}, {num_frames} frames")
+        self.save_path.mkdir(parents=True, exist_ok=True)
+        self.save_data(self.save_path / f"{filename}.npz")
         
 def main(args):
     n = args[0]
