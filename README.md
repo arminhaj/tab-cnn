@@ -35,13 +35,25 @@ Run the following line to preprocess different spectral representations for the 
 
 This will save the preprocessed data as compressed numpy (.npz) files in the `data/spec_repr/` directory.
 
-### 3. (Optional) Set spectral representation
+### 3. (Optional) Configure model settings
 
-The default spectral spresentation is the Constant-Q Transform (CQT). To change representations, an argument can be added when creating the TabCNN object. Specifically, on line 193 in `model/TabCNN.py`, a `spec_repr` parameter can be set to one of the following:
+The default spectral representation is the Constant-Q Transform (CQT). You can change model settings by editing the `TabCNN(...)` constructor call in `model/TabCNN.py`.
+
+`spec_repr` options:
 * `spec_repr = "c"`, for CQT
 * `spec_repr = "m"`, for Mel-scaled spectrogram (Melspec)
 * `spec_repr = "cm"`, for CQT + Melspec concatenation
 * `spec_repr = "s"`, for Short-time Fourier Transform (STFT)
+
+`architecture` options:
+* `architecture = "cnn"` for the original convolutional model
+* `architecture = "crnn"` for the convolutional + recurrent variant
+
+For the CRNN, recurrent settings are:
+* `rnn_type = "gru"` or `rnn_type = "lstm"`
+* `rnn_units` (hidden size)
+* `rnn_layers` (number of recurrent layers)
+* `bidirectional = True/False`
 
 ### 4. Train and test model
 
@@ -50,7 +62,6 @@ Run the following line to train and test the TabCNN model:
 `python model/TabCNN.py`
 
 A summary log and a csv results file will be saved in a time-stamped folder within the `model/saved/` directory. Additionally, a folder for each fold of data will be created, containing the individual model's weights and predictions. 
-
 
 
 
