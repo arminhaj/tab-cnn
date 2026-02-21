@@ -155,7 +155,12 @@ class TabCNN:
                        verbose=1)
         
     def save_weights(self):
-        self.model.save_weights(str(self.split_folder / "weights.h5"))
+        self.model.save_weights(str(self.split_folder / "weights.weights.h5"))
+
+    def preflight_save_check(self):
+        probe_path = self.split_folder / "_save_probe.weights.h5"
+        self.model.save_weights(str(probe_path))
+        probe_path.unlink(missing_ok=True)
         
     def test(self):
         self.X_test, self.y_gt = self.validation_generator[0]
@@ -201,6 +206,8 @@ if __name__ == "__main__":
         tabcnn.partition_data(fold)
         print("building model...")
         tabcnn.build_model()
+        print("checking save path...")
+        tabcnn.preflight_save_check()
         print("training...")
         tabcnn.train()
         tabcnn.save_weights()
