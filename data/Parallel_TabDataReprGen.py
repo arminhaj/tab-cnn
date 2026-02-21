@@ -16,6 +16,6 @@ mode_list = (
 
 
 if __name__ == "__main__":
-    # number of processes will run simultaneously
     pool = Pool(11)
-    results = pool.map(main, zip(filename_indices, mode_list))
+    args = zip(filename_indices, mode_list)
+    results = pool.map(main, args)
