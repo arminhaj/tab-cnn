@@ -157,7 +157,7 @@ class TabDataReprGen:
         self.save_data(self.save_path / f"{filename}.npz")
         
 def main(args):
-    n = args[0]
+    n = int(args[0])
     m = args[1]
     gen = TabDataReprGen(mode=m)
     gen.load_and_save_repr_nth_file(n)
