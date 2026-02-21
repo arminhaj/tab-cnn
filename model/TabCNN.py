@@ -5,9 +5,9 @@
 from __future__ import print_function
 import keras
 from pathlib import Path
-from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten, Reshape, Activation
-from keras.layers import Conv2D, MaxPooling2D, Conv1D, Lambda
+from keras.layers import Conv2D, MaxPooling2D, Input, Permute, TimeDistributed
+from keras.layers import GRU, LSTM, Bidirectional
 from DataGenerator import DataGenerator
 import pandas as pd
 import numpy as np
@@ -23,12 +23,30 @@ class TabCNN:
                  spec_repr="c",
                  data_path=None,
                  id_file="id.csv",
-                 save_path=None):   
+                 save_path=None,
+                 architecture="crnn",
+                 rnn_type="gru",
+                 rnn_units=128,
+                 rnn_layers=1,
+                 bidirectional=True):   
         
         self.batch_size = batch_size
         self.epochs = epochs
         self.con_win_size = con_win_size
         self.spec_repr = spec_repr
+        self.architecture = architecture.lower()
+        self.rnn_type = rnn_type.lower()
+        self.rnn_units = rnn_units
+        self.rnn_layers = rnn_layers
+        self.bidirectional = bidirectional
+
+        if self.architecture not in {"cnn", "crnn"}:
+            raise ValueError("architecture must be 'cnn' or 'crnn'")
+        if self.rnn_type not in {"gru", "lstm"}:
+            raise ValueError("rnn_type must be 'gru' or 'lstm'")
+        if self.architecture == "crnn" and self.rnn_layers < 1:
+            raise ValueError("rnn_layers must be >= 1 when using architecture='crnn'")
+
         model_dir = Path(__file__).resolve().parent
         project_root = model_dir.parent
         default_data_path = project_root / "data" / "spec_repr"
@@ -39,7 +57,8 @@ class TabCNN:
         
         self.load_IDs()
         
-        self.save_folder = self.save_path / (self.spec_repr + " " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        run_name = f"{self.spec_repr}_{self.architecture} " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.save_folder = self.save_path / run_name
         self.save_folder.mkdir(parents=True, exist_ok=True)
         self.log_file = self.save_folder / "log.txt"
         
@@ -110,6 +129,11 @@ class TabCNN:
             fh.write("\ndata_path: " + str(self.data_path))
             fh.write("\ncon_win_size: " + str(self.con_win_size))
             fh.write("\nid_file: " + str(self.id_file) + "\n")
+            fh.write("\narchitecture: " + str(self.architecture))
+            fh.write("\nrnn_type: " + str(self.rnn_type))
+            fh.write("\nrnn_units: " + str(self.rnn_units))
+            fh.write("\nrnn_layers: " + str(self.rnn_layers))
+            fh.write("\nbidirectional: " + str(self.bidirectional) + "\n")
             self.model.summary(print_fn=lambda x: fh.write(x + '\n'))
        
     def softmax_by_string(self, t):
@@ -126,21 +150,62 @@ class TabCNN:
         )
         return keras.ops.mean(keras.ops.cast(per_string_match, "float32"))
            
+    def build_cnn_model(self):
+        inputs = Input(shape=self.input_shape)
+        x = Conv2D(32, kernel_size=(3, 3), activation='relu')(inputs)
+        x = Conv2D(64, (3, 3), activation='relu')(x)
+        x = Conv2D(64, (3, 3), activation='relu')(x)
+        x = MaxPooling2D(pool_size=(2, 2))(x)
+        x = Dropout(0.25)(x)
+        x = Flatten()(x)
+        x = Dense(128, activation='relu')(x)
+        x = Dropout(0.5)(x)
+        x = Dense(self.num_classes * self.num_strings)(x)
+        x = Reshape((self.num_strings, self.num_classes))(x)
+        outputs = Activation(self.softmax_by_string)(x)
+        return keras.Model(inputs=inputs, outputs=outputs, name="tabcnn")
+
+    def _build_recurrent_layer(self, return_sequences):
+        if self.rnn_type == "lstm":
+            return LSTM(self.rnn_units, return_sequences=return_sequences)
+        return GRU(self.rnn_units, return_sequences=return_sequences)
+
+    def build_crnn_model(self):
+        inputs = Input(shape=self.input_shape)
+
+        # Reduce only the frequency axis so the RNN can read a temporal sequence.
+        x = Conv2D(32, kernel_size=(5, 3), padding='same', activation='relu')(inputs)
+        x = Conv2D(64, kernel_size=(3, 3), padding='same', activation='relu')(x)
+        x = MaxPooling2D(pool_size=(2, 1))(x)
+        x = Dropout(0.25)(x)
+        x = Conv2D(64, kernel_size=(3, 3), padding='same', activation='relu')(x)
+        x = MaxPooling2D(pool_size=(2, 1))(x)
+        x = Dropout(0.25)(x)
+
+        # Convert (freq, time, channels) -> (time, flattened_features).
+        x = Permute((2, 1, 3))(x)
+        x = TimeDistributed(Flatten())(x)
+
+        for layer_idx in range(self.rnn_layers):
+            return_sequences = layer_idx < (self.rnn_layers - 1)
+            rnn_layer = self._build_recurrent_layer(return_sequences=return_sequences)
+            if self.bidirectional:
+                x = Bidirectional(rnn_layer)(x)
+            else:
+                x = rnn_layer(x)
+
+        x = Dense(128, activation='relu')(x)
+        x = Dropout(0.5)(x)
+        x = Dense(self.num_classes * self.num_strings)(x)
+        x = Reshape((self.num_strings, self.num_classes))(x)
+        outputs = Activation(self.softmax_by_string)(x)
+        return keras.Model(inputs=inputs, outputs=outputs, name="tabcrnn")
+
     def build_model(self):
-        model = Sequential()
-        model.add(keras.Input(shape=self.input_shape))
-        model.add(Conv2D(32, kernel_size=(3, 3),
-                             activation='relu'))
-        model.add(Conv2D(64, (3, 3), activation='relu'))
-        model.add(Conv2D(64, (3, 3), activation='relu'))
-        model.add(MaxPooling2D(pool_size=(2, 2)))
-        model.add(Dropout(0.25))   
-        model.add(Flatten())
-        model.add(Dense(128, activation='relu'))
-        model.add(Dropout(0.5))
-        model.add(Dense(self.num_classes * self.num_strings)) # no activation
-        model.add(Reshape((self.num_strings, self.num_classes)))
-        model.add(Activation(self.softmax_by_string))
+        if self.architecture == "cnn":
+            model = self.build_cnn_model()
+        else:
+            model = self.build_crnn_model()
 
         model.compile(loss=self.catcross_by_string,
                       optimizer=keras.optimizers.Adadelta(),
@@ -195,7 +260,7 @@ class TabCNN:
 ##################################
 
 if __name__ == "__main__":
-    tabcnn = TabCNN()
+    tabcnn = TabCNN(architecture="crnn", rnn_type="gru", rnn_units=128, rnn_layers=1, bidirectional=True)
 
     print("logging model...")
     tabcnn.build_model()
