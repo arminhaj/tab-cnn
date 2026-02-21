@@ -4,7 +4,7 @@
 
 from __future__ import print_function
 import keras
-import os
+from pathlib import Path
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten, Reshape, Activation
 from keras.layers import Conv2D, MaxPooling2D, Conv1D, Lambda
@@ -22,24 +22,27 @@ class TabCNN:
                  epochs=8,
                  con_win_size = 9,
                  spec_repr="c",
-                 data_path="../data/spec_repr/",
+                 data_path=None,
                  id_file="id.csv",
-                 save_path="saved/"):   
+                 save_path=None):   
         
         self.batch_size = batch_size
         self.epochs = epochs
         self.con_win_size = con_win_size
         self.spec_repr = spec_repr
-        self.data_path = data_path
+        model_dir = Path(__file__).resolve().parent
+        project_root = model_dir.parent
+        default_data_path = project_root / "data" / "spec_repr"
+        default_save_path = model_dir / "saved"
+        self.data_path = Path(data_path) if data_path is not None else default_data_path
         self.id_file = id_file
-        self.save_path = save_path
+        self.save_path = Path(save_path) if save_path is not None else default_save_path
         
         self.load_IDs()
         
-        self.save_folder = self.save_path + self.spec_repr + " " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "/"
-        if not os.path.exists(self.save_folder):
-            os.makedirs(self.save_folder)
-        self.log_file = self.save_folder + "log.txt"
+        self.save_folder = self.save_path / (self.spec_repr + " " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self.save_folder.mkdir(parents=True, exist_ok=True)
+        self.log_file = self.save_folder / "log.txt"
         
         self.metrics = {}
         self.metrics["pp"] = []
@@ -65,8 +68,11 @@ class TabCNN:
         self.num_strings = 6
 
     def load_IDs(self):
-        csv_file = self.data_path + self.id_file
+        csv_file = self.data_path / self.id_file
         self.list_IDs = list(pd.read_csv(csv_file, header=None)[0])
+
+    def generator_data_path(self):
+        return str(self.data_path) + "/"
         
     def partition_data(self, data_split):
         self.data_split = data_split
@@ -81,25 +87,24 @@ class TabCNN:
                 self.partition["training"].append(ID)
                 
         self.training_generator = DataGenerator(self.partition['training'], 
-                                                data_path=self.data_path, 
+                                                data_path=self.generator_data_path(), 
                                                 batch_size=self.batch_size, 
                                                 shuffle=True,
                                                 spec_repr=self.spec_repr, 
                                                 con_win_size=self.con_win_size)
         
         self.validation_generator = DataGenerator(self.partition['validation'], 
-                                                data_path=self.data_path, 
+                                                data_path=self.generator_data_path(), 
                                                 batch_size=len(self.partition['validation']), 
                                                 shuffle=False,
                                                 spec_repr=self.spec_repr, 
                                                 con_win_size=self.con_win_size)
         
-        self.split_folder = self.save_folder + str(self.data_split) + "/"
-        if not os.path.exists(self.split_folder):
-            os.makedirs(self.split_folder)
+        self.split_folder = self.save_folder / str(self.data_split)
+        self.split_folder.mkdir(parents=True, exist_ok=True)
                 
     def log_model(self):
-        with open(self.log_file,'w') as fh:
+        with self.log_file.open('w') as fh:
             fh.write("\nbatch_size: " + str(self.batch_size))
             fh.write("\nepochs: " + str(self.epochs))
             fh.write("\nspec_repr: " + str(self.spec_repr))
@@ -155,14 +160,14 @@ class TabCNN:
                     workers=9)
         
     def save_weights(self):
-        self.model.save_weights(self.split_folder + "weights.h5")
+        self.model.save_weights(str(self.split_folder / "weights.h5"))
         
     def test(self):
         self.X_test, self.y_gt = self.validation_generator[0]
         self.y_pred = self.model.predict(self.X_test)
         
     def save_predictions(self):
-        np.savez(self.split_folder + "predictions.npz", y_pred=self.y_pred, y_gt=self.y_gt)
+        np.savez(self.split_folder / "predictions.npz", y_pred=self.y_pred, y_gt=self.y_gt)
         
     def evaluate(self):
         self.metrics["pp"].append(pitch_precision(self.y_pred, self.y_gt))
@@ -183,7 +188,7 @@ class TabCNN:
                 output[key] = vals + [mean, std]
         output["data"] =  self.metrics["data"]
         df = pd.DataFrame.from_dict(output)
-        df.to_csv(self.save_folder + "results.csv") 
+        df.to_csv(self.save_folder / "results.csv") 
         
 ##################################
 ########### EXPERIMENT ###########
