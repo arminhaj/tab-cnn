@@ -8,7 +8,6 @@ from pathlib import Path
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten, Reshape, Activation
 from keras.layers import Conv2D, MaxPooling2D, Conv1D, Lambda
-from keras import backend as K
 from DataGenerator import DataGenerator
 import pandas as pd
 import numpy as np
@@ -114,26 +113,24 @@ class TabCNN:
             self.model.summary(print_fn=lambda x: fh.write(x + '\n'))
        
     def softmax_by_string(self, t):
-        sh = K.shape(t)
-        string_sm = []
-        for i in range(self.num_strings):
-            string_sm.append(K.expand_dims(K.softmax(t[:,i,:]), axis=1))
-        return K.concatenate(string_sm, axis=1)
+        return keras.ops.softmax(t, axis=-1)
     
     def catcross_by_string(self, target, output):
-        loss = 0
-        for i in range(self.num_strings):
-            loss += K.categorical_crossentropy(target[:,i,:], output[:,i,:])
-        return loss
+        per_string_loss = keras.losses.categorical_crossentropy(target, output)
+        return keras.ops.sum(per_string_loss, axis=1)
     
     def avg_acc(self, y_true, y_pred):
-        return K.mean(K.equal(K.argmax(y_true, axis=-1), K.argmax(y_pred, axis=-1)))
+        per_string_match = keras.ops.equal(
+            keras.ops.argmax(y_true, axis=-1),
+            keras.ops.argmax(y_pred, axis=-1)
+        )
+        return keras.ops.mean(keras.ops.cast(per_string_match, "float32"))
            
     def build_model(self):
         model = Sequential()
+        model.add(keras.Input(shape=self.input_shape))
         model.add(Conv2D(32, kernel_size=(3, 3),
-                             activation='relu',
-                             input_shape=self.input_shape))
+                             activation='relu'))
         model.add(Conv2D(64, (3, 3), activation='relu'))
         model.add(Conv2D(64, (3, 3), activation='relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
@@ -152,12 +149,10 @@ class TabCNN:
         self.model = model
 
     def train(self):
-        self.model.fit_generator(generator=self.training_generator,
-                    validation_data=None,
-                    epochs=self.epochs,
-                    verbose=1,
-                    use_multiprocessing=True,
-                    workers=9)
+        self.model.fit(self.training_generator,
+                       validation_data=None,
+                       epochs=self.epochs,
+                       verbose=1)
         
     def save_weights(self):
         self.model.save_weights(str(self.split_folder / "weights.h5"))
@@ -194,24 +189,25 @@ class TabCNN:
 ########### EXPERIMENT ###########
 ##################################
 
-tabcnn = TabCNN()
+if __name__ == "__main__":
+    tabcnn = TabCNN()
 
-print("logging model...")
-tabcnn.build_model()
-tabcnn.log_model()
-
-for fold in range(6):
-    print("\nfold " + str(fold))
-    tabcnn.partition_data(fold)
-    print("building model...")
+    print("logging model...")
     tabcnn.build_model()
-    print("training...")
-    tabcnn.train()
-    tabcnn.save_weights()
-    print("testing...")
-    tabcnn.test()
-    tabcnn.save_predictions()
-    print("evaluation...")
-    tabcnn.evaluate()
-print("saving results...")
-tabcnn.save_results_csv()
+    tabcnn.log_model()
+
+    for fold in range(6):
+        print("\nfold " + str(fold))
+        tabcnn.partition_data(fold)
+        print("building model...")
+        tabcnn.build_model()
+        print("training...")
+        tabcnn.train()
+        tabcnn.save_weights()
+        print("testing...")
+        tabcnn.test()
+        tabcnn.save_predictions()
+        print("evaluation...")
+        tabcnn.evaluate()
+    print("saving results...")
+    tabcnn.save_results_csv()
