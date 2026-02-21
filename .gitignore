@@ -1,4 +1,5 @@
 model/demos
+model/saved
 data/GuitarSet/
 data/spec_repr
 nohup.out
