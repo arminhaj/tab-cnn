@@ -4,7 +4,14 @@ from multiprocessing import Pool
 modes = ["c","m","cm","s"]
 
 if __name__ == "__main__":
-    num_filenames = len(TabDataReprGen().get_filenames())
+    gen = TabDataReprGen()
+    filenames = gen.get_filenames()
+    num_filenames = len(filenames)
+    if num_filenames == 0:
+        raise FileNotFoundError(
+            f"No .jams annotation files found in {gen.path_anno}. "
+            "Expected GuitarSet annotations at data/GuitarSet/annotation."
+        )
     filename_indices = list(range(num_filenames)) * len(modes)
     mode_list = (
             [modes[0]] * num_filenames
