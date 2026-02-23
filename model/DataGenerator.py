@@ -1,9 +1,11 @@
+from collections import OrderedDict
+
 import numpy as np
 import keras
 
 class DataGenerator(keras.utils.Sequence):
     
-    def __init__(self, list_IDs, data_path="../data/spec_repr/", batch_size=128, shuffle=True, label_dim = (6,21), spec_repr="c", con_win_size=9, **kwargs):
+    def __init__(self, list_IDs, data_path="../data/spec_repr/", batch_size=128, shuffle=True, label_dim = (6,21), spec_repr="c", con_win_size=9, cache_files=32, **kwargs):
         super().__init__(**kwargs)
         
         self.list_IDs = list_IDs
@@ -14,6 +16,8 @@ class DataGenerator(keras.utils.Sequence):
         self.spec_repr = spec_repr
         self.con_win_size = con_win_size
         self.halfwin = con_win_size // 2
+        self.cache_files = max(0, int(cache_files))
+        self._file_cache = OrderedDict()
         
         if self.spec_repr == "c":
             self.X_dim = (self.batch_size, 192, self.con_win_size, 1)
@@ -55,8 +59,8 @@ class DataGenerator(keras.utils.Sequence):
         # X : (n_samples, *dim, n_channels)
         
         # Initialization
-        X = np.empty(self.X_dim)
-        y = np.empty(self.y_dim)
+        X = np.empty(self.X_dim, dtype=np.float32)
+        y = np.empty(self.y_dim, dtype=np.float32)
 
         # Generate data
         for i, ID in enumerate(list_IDs_temp):
@@ -67,15 +71,33 @@ class DataGenerator(keras.utils.Sequence):
             frame_idx = int(ID.split("_")[-1])
             
             # load a context window centered around the frame index
-            loaded = np.load(data_dir + filename)
-            full_x = np.pad(loaded["repr"], [(self.halfwin,self.halfwin), (0,0)], mode='constant')
+            repr_data, label_data = self._load_file(data_dir + filename)
+            full_x = np.pad(repr_data, [(self.halfwin,self.halfwin), (0,0)], mode='constant')
             sample_x = full_x[frame_idx : frame_idx + self.con_win_size]
             X[i,] = np.expand_dims(np.swapaxes(sample_x, 0, 1), -1)
 
             # Store label
-            y[i,] = loaded["labels"][frame_idx]
+            y[i,] = label_data[frame_idx]
 
         return X, y
+
+    def _load_file(self, path):
+        if self.cache_files > 0 and path in self._file_cache:
+            self._file_cache.move_to_end(path)
+            return self._file_cache[path]
+
+        with np.load(path, allow_pickle=False) as loaded:
+            file_data = (
+                loaded["repr"].astype(np.float32, copy=False),
+                loaded["labels"].astype(np.float32, copy=False),
+            )
+
+        if self.cache_files > 0:
+            self._file_cache[path] = file_data
+            if len(self._file_cache) > self.cache_files:
+                self._file_cache.popitem(last=False)
+
+        return file_data
         
         
         
