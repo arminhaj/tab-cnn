@@ -10,7 +10,7 @@ class TabDataReprGen:
     
     def __init__(self, mode="c"):
         # file path to the GuitarSet dataset
-        data_dir = Path("data")
+        data_dir = Path(__file__).resolve().parent
         path = data_dir / "GuitarSet"
         self.path_audio = path / "audio" / "audio_mic"
         self.path_anno = path / "annotation"
@@ -45,6 +45,13 @@ class TabDataReprGen:
         
         # save file path
         self.save_path = data_dir / "spec_repr" / self.preproc_mode
+    
+    def get_filenames(self):
+        # returns the filenames from the GuitarSet/annotation directory with no
+        # file extension as a sorted numpy array
+        filenames = self.path_anno.glob("*.jams")
+        stems = [p.stem for p in filenames]
+        return np.sort(np.array(stems))
 
     def load_rep_and_labels_from_raw_file(self, filename):
         file_audio = self.path_audio / f"{filename}_mic.wav"
@@ -139,11 +146,16 @@ class TabDataReprGen:
         np.savez(filename, **self.output)
         
     def get_nth_filename(self, n):
-        # returns the filename from the GuitarSet/annotation directory with no
-        # file extension as a numpy array in ascending order
-        filenames = self.path_anno.glob("*.jams")
-        stems = [p.stem for p in filenames]
-        out =  np.sort(np.array(stems)) 
+        out = self.get_filenames()
+        if len(out) == 0:
+            raise FileNotFoundError(
+                f"No annotation files found in {self.path_anno}. "
+                "Check that GuitarSet is installed and that you are using the expected project layout."
+            )
+        if n < 0 or n >= len(out):
+            raise IndexError(
+                f"Requested file index {n}, but only {len(out)} annotation files were found in {self.path_anno}."
+            )
         # FIXME: This was refactored, but the underlying logic is extremely
         # inefficient.
         return out[n]
