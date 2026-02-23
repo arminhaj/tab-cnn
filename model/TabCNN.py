@@ -291,7 +291,14 @@ class TabCNN:
             for batch_idx in range(len(sequence)):
                 yield sequence[batch_idx]
 
-        return tf.data.Dataset.from_generator(_batch_iter, output_signature=output_signature).prefetch(tf.data.AUTOTUNE)
+        dataset = tf.data.Dataset.from_generator(
+            _batch_iter,
+            output_signature=output_signature,
+        )
+        # Keras expects at least `steps_per_epoch * epochs` batches when
+        # `steps_per_epoch` is provided. Repeat the finite sequence-backed
+        # dataset and let `steps_per_epoch` delimit each epoch.
+        return dataset.repeat().prefetch(tf.data.AUTOTUNE)
 
     def _sequence_epoch_callback(self, sequence):
         if not (self.use_tf_data and self._tf_backend and tf is not None):
