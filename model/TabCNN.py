@@ -57,7 +57,7 @@ class TabCNN:
         
         self.load_IDs()
         
-        run_name = f"{self.spec_repr}_{self.architecture} " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        run_name = f"{self.spec_repr}_{self.architecture} " + datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
         self.save_folder = self.save_path / run_name
         self.save_folder.mkdir(parents=True, exist_ok=True)
         self.log_file = self.save_folder / "log.txt"
