@@ -5,6 +5,10 @@
 from __future__ import print_function
 import keras
 from pathlib import Path
+try:
+    import tensorflow as tf
+except ImportError:  # pragma: no cover - tensorflow may be absent in some environments
+    tf = None
 from keras.layers import Dense, Dropout, Flatten, Reshape, Activation
 from keras.layers import Conv2D, MaxPooling2D, Input, Permute, TimeDistributed
 from keras.layers import GRU, LSTM, Bidirectional
@@ -28,7 +32,12 @@ class TabCNN:
                  rnn_type="gru",
                  rnn_units=128,
                  rnn_layers=1,
-                 bidirectional=True):   
+                 bidirectional=True,
+                 generator_cache_files=32,
+                 use_tf_data=True,
+                 enable_mixed_precision=True,
+                 enable_xla=False,
+                 gpu_memory_growth=True):   
         
         self.batch_size = batch_size
         self.epochs = epochs
@@ -39,6 +48,13 @@ class TabCNN:
         self.rnn_units = rnn_units
         self.rnn_layers = rnn_layers
         self.bidirectional = bidirectional
+        self.generator_cache_files = generator_cache_files
+        self.use_tf_data = use_tf_data
+        self.enable_mixed_precision = enable_mixed_precision
+        self.enable_xla = enable_xla
+        self.gpu_memory_growth = gpu_memory_growth
+        self._tf_backend = False
+        self._gpu_devices = []
 
         if self.architecture not in {"cnn", "crnn"}:
             raise ValueError("architecture must be 'cnn' or 'crnn'")
@@ -54,6 +70,8 @@ class TabCNN:
         self.data_path = Path(data_path) if data_path is not None else default_data_path
         self.id_file = id_file
         self.save_path = Path(save_path) if save_path is not None else default_save_path
+
+        self.configure_runtime()
         
         self.load_IDs()
         
@@ -89,6 +107,39 @@ class TabCNN:
         csv_file = self.data_path / self.id_file
         self.list_IDs = list(pd.read_csv(csv_file, header=None)[0])
 
+    def configure_runtime(self):
+        if tf is None:
+            return
+
+        try:
+            self._tf_backend = (keras.backend.backend() == "tensorflow")
+        except Exception:
+            self._tf_backend = False
+
+        if not self._tf_backend:
+            return
+
+        self._gpu_devices = tf.config.list_physical_devices("GPU")
+
+        if self.gpu_memory_growth:
+            for gpu in self._gpu_devices:
+                try:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+                except Exception:
+                    pass
+
+        if self.enable_xla:
+            try:
+                tf.config.optimizer.set_jit(True)
+            except Exception:
+                pass
+
+        if self.enable_mixed_precision and self._gpu_devices:
+            try:
+                keras.mixed_precision.set_global_policy("mixed_float16")
+            except Exception:
+                pass
+
     def generator_data_path(self):
         return str(self.data_path) + "/"
         
@@ -109,14 +160,16 @@ class TabCNN:
                                                 batch_size=self.batch_size, 
                                                 shuffle=True,
                                                 spec_repr=self.spec_repr, 
-                                                con_win_size=self.con_win_size)
+                                                con_win_size=self.con_win_size,
+                                                cache_files=self.generator_cache_files)
         
         self.validation_generator = DataGenerator(self.partition['validation'], 
                                                 data_path=self.generator_data_path(), 
                                                 batch_size=len(self.partition['validation']), 
                                                 shuffle=False,
                                                 spec_repr=self.spec_repr, 
-                                                con_win_size=self.con_win_size)
+                                                con_win_size=self.con_win_size,
+                                                cache_files=self.generator_cache_files)
         
         self.split_folder = self.save_folder / str(self.data_split)
         self.split_folder.mkdir(parents=True, exist_ok=True)
@@ -134,6 +187,13 @@ class TabCNN:
             fh.write("\nrnn_units: " + str(self.rnn_units))
             fh.write("\nrnn_layers: " + str(self.rnn_layers))
             fh.write("\nbidirectional: " + str(self.bidirectional) + "\n")
+            fh.write("\ngenerator_cache_files: " + str(self.generator_cache_files))
+            fh.write("\nuse_tf_data: " + str(self.use_tf_data))
+            fh.write("\nenable_mixed_precision: " + str(self.enable_mixed_precision))
+            fh.write("\nenable_xla: " + str(self.enable_xla))
+            fh.write("\ngpu_memory_growth: " + str(self.gpu_memory_growth))
+            fh.write("\nbackend_is_tensorflow: " + str(self._tf_backend))
+            fh.write("\ngpu_count: " + str(len(self._gpu_devices)) + "\n")
             self.model.summary(print_fn=lambda x: fh.write(x + '\n'))
        
     def softmax_by_string(self, t):
@@ -207,17 +267,55 @@ class TabCNN:
         else:
             model = self.build_crnn_model()
 
-        model.compile(loss=self.catcross_by_string,
-                      optimizer=keras.optimizers.Adadelta(),
-                      metrics=[self.avg_acc])
+        compile_kwargs = {
+            "loss": self.catcross_by_string,
+            "optimizer": keras.optimizers.Adadelta(),
+            "metrics": [self.avg_acc],
+        }
+        if self._tf_backend:
+            compile_kwargs["jit_compile"] = bool(self.enable_xla)
+        model.compile(**compile_kwargs)
         
         self.model = model
 
+    def _sequence_to_tf_dataset(self, sequence):
+        if not (self.use_tf_data and self._tf_backend and tf is not None):
+            return sequence
+
+        output_signature = (
+            tf.TensorSpec(shape=(None,) + self.input_shape, dtype=tf.float32),
+            tf.TensorSpec(shape=(None, self.num_strings, self.num_classes), dtype=tf.float32),
+        )
+
+        def _batch_iter():
+            for batch_idx in range(len(sequence)):
+                yield sequence[batch_idx]
+
+        return tf.data.Dataset.from_generator(_batch_iter, output_signature=output_signature).prefetch(tf.data.AUTOTUNE)
+
+    def _sequence_epoch_callback(self, sequence):
+        if not (self.use_tf_data and self._tf_backend and tf is not None):
+            return None
+
+        class _SequenceEpochEndCallback(keras.callbacks.Callback):
+            def on_epoch_end(self, epoch, logs=None):
+                sequence.on_epoch_end()
+
+        return _SequenceEpochEndCallback()
+
     def train(self):
-        self.model.fit(self.training_generator,
-                       validation_data=None,
-                       epochs=self.epochs,
-                       verbose=1)
+        train_data = self._sequence_to_tf_dataset(self.training_generator)
+        fit_kwargs = {
+            "validation_data": None,
+            "epochs": self.epochs,
+            "verbose": 1,
+        }
+        if train_data is not self.training_generator:
+            fit_kwargs["steps_per_epoch"] = len(self.training_generator)
+            epoch_callback = self._sequence_epoch_callback(self.training_generator)
+            if epoch_callback is not None:
+                fit_kwargs["callbacks"] = [epoch_callback]
+        self.model.fit(train_data, **fit_kwargs)
         
     def save_weights(self):
         self.model.save_weights(str(self.split_folder / "weights.weights.h5"))
