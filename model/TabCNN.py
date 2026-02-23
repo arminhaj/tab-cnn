@@ -122,7 +122,7 @@ class TabCNN:
         self.split_folder.mkdir(parents=True, exist_ok=True)
                 
     def log_model(self):
-        with self.log_file.open('w') as fh:
+        with self.log_file.open('w', encoding='utf-8') as fh:
             fh.write("\nbatch_size: " + str(self.batch_size))
             fh.write("\nepochs: " + str(self.epochs))
             fh.write("\nspec_repr: " + str(self.spec_repr))
