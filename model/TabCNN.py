@@ -3,6 +3,7 @@
 '''
 
 from __future__ import print_function
+import argparse
 import keras
 from pathlib import Path
 try:
@@ -88,6 +89,7 @@ class TabCNN:
         self.metrics["tr"] = []
         self.metrics["tf"] = []
         self.metrics["tdr"] = []
+        self.metrics["ind"] = []
         self.metrics["data"] = ["g0","g1","g2","g3","g4","g5","mean","std dev"]
         
         if self.spec_repr == "c":
@@ -347,6 +349,7 @@ class TabCNN:
         self.metrics["tr"].append(tab_recall(self.y_pred, self.y_gt))
         self.metrics["tf"].append(tab_f_measure(self.y_pred, self.y_gt))
         self.metrics["tdr"].append(tab_disamb(self.y_pred, self.y_gt))
+        self.metrics["ind"].append(incorrect_note_distance(self.y_pred, self.y_gt))
         
     def save_results_csv(self):
         output = {}
@@ -359,12 +362,90 @@ class TabCNN:
         output["data"] =  self.metrics["data"]
         df = pd.DataFrame.from_dict(output)
         df.to_csv(self.save_folder / "results.csv") 
+
+
+def evaluate_saved_run(run_path):
+    run_path = Path(run_path)
+    if not run_path.exists():
+        raise FileNotFoundError(f"Run directory not found: {run_path}")
+
+    fold_dirs = sorted(
+        [p for p in run_path.iterdir() if p.is_dir() and p.name.isdigit()],
+        key=lambda p: int(p.name),
+    )
+    if not fold_dirs:
+        raise FileNotFoundError(
+            f"No numeric fold directories found in {run_path} (expected e.g. 0, 1, ...)."
+        )
+
+    metric_fns = {
+        "pp": pitch_precision,
+        "pr": pitch_recall,
+        "pf": pitch_f_measure,
+        "tp": tab_precision,
+        "tr": tab_recall,
+        "tf": tab_f_measure,
+        "tdr": tab_disamb,
+        "ind": incorrect_note_distance,
+    }
+
+    rows = []
+    row_labels = []
+    for fold_dir in fold_dirs:
+        pred_file = fold_dir / "predictions.npz"
+        if not pred_file.exists():
+            raise FileNotFoundError(f"Missing predictions file: {pred_file}")
+        with np.load(pred_file, allow_pickle=False) as loaded:
+            y_pred = loaded["y_pred"]
+            y_gt = loaded["y_gt"]
+        rows.append({name: fn(y_pred, y_gt) for name, fn in metric_fns.items()})
+        row_labels.append(f"g{fold_dir.name}")
+
+    df = pd.DataFrame(rows, index=row_labels)
+    mean_row = df.mean(axis=0)
+    std_row = df.std(axis=0, ddof=0)
+    out_df = pd.concat(
+        [
+            df.reset_index(names="data"),
+            pd.DataFrame([{"data": "mean", **mean_row.to_dict()}]),
+            pd.DataFrame([{"data": "std dev", **std_row.to_dict()}]),
+        ],
+        ignore_index=True,
+    )
+    out_df = out_df[["pp", "pr", "pf", "tp", "tr", "tf", "tdr", "ind", "data"]]
+    out_df.to_csv(run_path / "results.csv")
+
+    print("\nPer-fold metrics")
+    print(df.to_string())
+    print("\nMean")
+    print(mean_row.to_string())
+    print("\nStd dev")
+    print(std_row.to_string())
+    print(f"\nSaved results to {run_path / 'results.csv'}")
+    return out_df
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train TabCNN or evaluate saved predictions.")
+    parser.add_argument(
+        "--evaluate-only",
+        type=str,
+        default=None,
+        metavar="RUN_DIR",
+        help="Path to a completed run directory (contains fold subdirs with predictions.npz).",
+    )
+    return parser.parse_args()
         
 ##################################
 ########### EXPERIMENT ###########
 ##################################
 
 if __name__ == "__main__":
+    args = parse_args()
+    if args.evaluate_only:
+        evaluate_saved_run(args.evaluate_only)
+        raise SystemExit(0)
+
     tabcnn = TabCNN(architecture="crnn", rnn_type="gru", rnn_units=128, rnn_layers=1, bidirectional=True)
 
     print("logging model...")
