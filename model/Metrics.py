@@ -1,5 +1,8 @@
 import numpy as np
 import keras
+
+
+STRING_MIDI_PITCHES = np.array([40, 45, 50, 55, 59, 64], dtype=np.int32)
     
 def tab2pitch(tab):
     pitch_vector = np.zeros(44)
@@ -70,3 +73,30 @@ def tab_disamb(pred, gt):
     tp = tab_precision(pred, gt)
     pp = pitch_precision(pred, gt)
     return tp / pp
+
+
+def incorrect_note_distance(pred, gt):
+    """Average semitone distance on wrong per-string note predictions.
+
+    This metric only considers positions where:
+    - the predicted class and ground-truth class differ, and
+    - both classes represent sounding notes (class > 0, i.e. not "closed").
+
+    It measures how far the wrong guess is from the correct note in semitones.
+    Lower is better. Returns 0.0 if there are no qualifying mistakes.
+    """
+    pred_cls = np.argmax(pred, axis=-1)
+    gt_cls = np.argmax(gt, axis=-1)
+
+    wrong_mask = pred_cls != gt_cls
+    note_mask = (pred_cls > 0) & (gt_cls > 0)
+    valid_mask = wrong_mask & note_mask
+
+    if not np.any(valid_mask):
+        return 0.0
+
+    # Class 1 is open string, so MIDI pitch = open-string MIDI + (class - 1).
+    pred_midi = STRING_MIDI_PITCHES[None, :] + (pred_cls - 1)
+    gt_midi = STRING_MIDI_PITCHES[None, :] + (gt_cls - 1)
+    distances = np.abs(pred_midi - gt_midi)
+    return float(np.mean(distances[valid_mask]))
