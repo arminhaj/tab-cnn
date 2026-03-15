@@ -1,4 +1,6 @@
-model/demos
+.venv/
+demos/*.mp4
+demos/generated
 model/saved
 data/GuitarSet/
 data/spec_repr

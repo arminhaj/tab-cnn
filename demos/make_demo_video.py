@@ -11,13 +11,18 @@ also render an MP4 and optionally mux audio from GuitarSet.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
-import jams
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+try:
+    import jams
+except ImportError:  # pragma: no cover - optional dependency
+    jams = None
 
 try:
     import imageio_ffmpeg
@@ -92,6 +97,8 @@ def midi_pitch_to_class_idx(midi_pitch: float | None, string_num: int) -> int:
 
 
 def load_gt_from_jams(annotation_root: Path, track: str, frame_numbers: np.ndarray) -> np.ndarray:
+    if jams is None:
+        raise ImportError("jams is required for --gt-source jams. Install it or use --gt-source predictions.")
     jam_path = annotation_root / f"{track}.jams"
     if not jam_path.exists():
         raise FileNotFoundError(f"Missing annotation file: {jam_path}")
@@ -193,9 +200,8 @@ def draw_packaged_frame(
 
     width, height = 1080, 1080
     draw.rectangle([0, 0, width, height], fill=bg)
-    draw.line([(540, 0), (540, height)], fill=(110, 110, 110), width=2)
 
-    x_left, x_right = 92, 408
+    x_left, x_right = 382, 698
     y_top = 102
     fret_h = 84
     y_bottom = y_top + display_frets * fret_h
@@ -213,7 +219,7 @@ def draw_packaged_frame(
     string_label_font = load_font(44)
     for fret in range(1, display_frets + 1):
         y = int(y_top + (fret - 0.5) * fret_h - 20)
-        draw.text((48, y), str(fret), fill=(35, 35, 35), font=fret_label_font)
+        draw.text((x_left - 44, y), str(fret), fill=(35, 35, 35), font=fret_label_font)
     for i, name in enumerate(STRING_NAMES):
         draw.text((string_x[i] - 12, y_bottom + 20), name, fill=(35, 35, 35), font=string_label_font)
 
@@ -238,7 +244,8 @@ def draw_packaged_frame(
 
         if pred_val == gt_val:
             if pred_val == 0:
-                draw_x_marker(draw, string_x[s], x_y, x_size + 2, magenta, 2)
+                # Offset the magenta mute marker so it remains visible against the blue X.
+                draw_x_marker(draw, string_x[s] + 4, x_y - 4, x_size + 2, magenta, 2)
                 draw_x_marker(draw, string_x[s], x_y, x_size, blue, 3)
             else:
                 pred_fret = min(max(pred_val - 1, 0), display_frets)
@@ -261,30 +268,6 @@ def draw_packaged_frame(
                 [string_x[s] - note_r, pred_y - note_r, string_x[s] + note_r, pred_y + note_r],
                 fill=red,
             )
-
-    title_font = load_font(78)
-    body_font = load_font(56)
-    draw.text((690, 42), "Legend", fill=black, font=title_font)
-    draw.line([(690, 122), (918, 122)], fill=black, width=4)
-
-    y0 = 260
-    draw.ellipse([592 - 20, y0 - 20, 592 + 20, y0 + 20], fill=blue)
-    draw.text((650, y0 - 34), "Ground truth labels are", fill=black, font=body_font)
-    draw.text((650, y0 + 30), "shown in", fill=black, font=body_font)
-    draw.text((848, y0 + 30), "blue.", fill=blue, font=body_font)
-
-    y1 = 470
-    draw.ellipse([592 - 20, y1 - 20, 592 + 20, y1 + 20], fill=blue)
-    draw.ellipse([592 - 28, y1 - 28, 592 + 28, y1 + 28], outline=magenta, width=5)
-    draw.text((650, y1 - 34), "Correct predictions are", fill=black, font=body_font)
-    draw.text((650, y1 + 30), "outlined in", fill=black, font=body_font)
-    draw.text((842, y1 + 30), "magenta.", fill=magenta, font=body_font)
-
-    y2 = 680
-    draw.ellipse([592 - 20, y2 - 20, 592 + 20, y2 + 20], fill=red)
-    draw.text((650, y2 - 34), "Incorrect predictions", fill=black, font=body_font)
-    draw.text((650, y2 + 30), "are shown in", fill=black, font=body_font)
-    draw.text((840, y2 + 30), "red.", fill=red, font=body_font)
 
     tiny_font = load_font(34)
     draw.text((30, 20), f"Frame {frame_idx}", fill=(60, 60, 60), font=tiny_font)
@@ -406,8 +389,28 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--gif-fps", type=float, default=10.0, help="GIF frame rate.")
     parser.add_argument("--max-frames", type=int, default=None, help="Optional frame cap for quick previews.")
-    parser.add_argument("--clean-frames", action="store_true", help="Delete intermediate frame PNGs after rendering.")
+    parser.add_argument(
+        "--keep-frames",
+        action="store_true",
+        help="Keep intermediate frame PNGs after rendering (default: delete them).",
+    )
+    parser.add_argument(
+        "--clean-frames",
+        action="store_true",
+        help="Deprecated; cleanup is now the default behavior.",
+    )
     return parser.parse_args()
+
+
+def get_model_run_label(run_dir: Path) -> str:
+    name = run_dir.name.strip()
+    match = re.search(r"\d{4}-\d{2}-\d{2}(?: \d{2}-\d{2}-\d{2})?", name)
+    if not match:
+        return name
+
+    model_name = name[: match.start()].strip()
+    model_date = match.group(0)
+    return f"{model_name} {model_date}".strip()
 
 
 def render_one_track(
@@ -416,6 +419,8 @@ def render_one_track(
     y_pred: np.ndarray,
     y_gt: np.ndarray,
     track: str,
+    out_dir: Path,
+    model_run_label: str,
 ) -> None:
     y_pred_track, y_gt_track, frame_numbers = load_track_slice(validation_ids, track, y_pred, y_gt)
 
@@ -424,11 +429,11 @@ def render_one_track(
     else:
         y_gt_classes = np.argmax(y_gt_track, axis=-1)
 
-    stem = f"{args.run_dir.name}_fold{args.fold}_{track}"
-    frames_dir = args.out_dir / f"{stem}_frames"
-    gif_path = args.out_dir / f"{stem}.gif"
-    mp4_path = args.out_dir / f"{stem}.mp4"
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{model_run_label}_fold{args.fold}_{track}"
+    frames_dir = out_dir / f"{stem}_frames"
+    gif_path = out_dir / f"{stem}.gif"
+    mp4_path = out_dir / f"{stem}.mp4"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.style == "packaged":
         frame_count = render_frames_packaged(
@@ -457,7 +462,7 @@ def render_one_track(
         if audio_wav.exists():
             print(f"[{track}] Install ffmpeg to mux audio into MP4.")
 
-    if args.clean_frames:
+    if not args.keep_frames:
         shutil.rmtree(frames_dir, ignore_errors=True)
         print(f"[{track}] Deleted intermediate frames folder.")
 
@@ -482,10 +487,16 @@ def main() -> None:
         raise ValueError(f"Unexpected prediction shape {y_pred.shape}; expected (*, 6, 21).")
 
     validation_ids = load_validation_ids(args.id_csv, args.fold)
+    model_run_label = get_model_run_label(args.run_dir)
     tracks = list_tracks_in_ids(validation_ids) if args.all_tracks else [args.track]
+    render_out_dir = args.out_dir
+    if args.all_tracks:
+        # For full-fold demo generation, keep outputs under the model fold directory.
+        render_out_dir = args.run_dir / str(args.fold) / "demos"
+        render_out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Rendering {len(tracks)} track(s) from fold {args.fold}...")
     for track in tracks:
-        render_one_track(args, validation_ids, y_pred, y_gt, track)
+        render_one_track(args, validation_ids, y_pred, y_gt, track, render_out_dir, model_run_label)
 
 
 if __name__ == "__main__":

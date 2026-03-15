@@ -65,7 +65,27 @@ A summary log and a csv results file will be saved in a time-stamped folder with
 
 
 
+### 5. Compare metrics between two saved runs
 
+Use the helper script below to recompute fold metrics from `predictions.npz` and write side-by-side comparison tables:
+
+`./.venv/bin/python model/compare_metrics.py --run-a "model/saved/c_cnn 2026-02-24 00-19-51" --run-b "model/saved/c_crnn 2026-02-23 14-07-45" --label-a cnn --label-b crnn`
+
+Outputs are written to `model/saved/comparisons/`:
+* `*_summary.csv`
+* `*_summary.md`
+* `*_per_fold.csv`
+
+### 6. Generate your own demo visualizations
+
+You can render a per-track ground-truth vs prediction tablature visualization from a saved fold:
+
+`./.venv/bin/python demos/make_demo_video.py --run-dir "model/saved/c_cnn 2026-02-24 00-19-51" --fold 0 --track 00_BN1-129-Eb_comp --max-frames 300`
+
+This writes:
+* an animated GIF preview (`demos/generated/*.gif`)
+* an MP4 (`demos/generated/*.mp4`) if `ffmpeg` is installed
+* intermediate frame PNGs are deleted automatically; pass `--keep-frames` to retain `demos/generated/*_frames/`
 
 
 

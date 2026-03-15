@@ -94,7 +94,7 @@ class TabDataReprGen:
     
     def correct_numbering(self, n):
         n += 1
-        if n < 0 or n > self.highest_fret:
+        if n < 0 or n > (self.highest_fret + 1):
             n = 0
         return n
     

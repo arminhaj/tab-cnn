@@ -100,3 +100,32 @@ def incorrect_note_distance(pred, gt):
     gt_midi = STRING_MIDI_PITCHES[None, :] + (gt_cls - 1)
     distances = np.abs(pred_midi - gt_midi)
     return float(np.mean(distances[valid_mask]))
+
+
+def fret_confusion_matrix(pred, gt, num_classes=21):
+    """Count true-vs-predicted fret classes across all frames and strings."""
+    pred_cls = np.argmax(pred, axis=-1).reshape(-1)
+    gt_cls = np.argmax(gt, axis=-1).reshape(-1)
+    confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
+    np.add.at(confusion, (gt_cls, pred_cls), 1)
+    return confusion
+
+
+def fret_confusion_summary(pred, gt, num_classes=21):
+    """Return a dataframe-friendly summary of non-zero fret confusions."""
+    confusion = fret_confusion_matrix(pred, gt, num_classes=num_classes)
+    rows = []
+    for true_fret in range(num_classes):
+        for pred_fret in range(num_classes):
+            count = int(confusion[true_fret, pred_fret])
+            if count == 0:
+                continue
+            rows.append(
+                {
+                    "true_fret": true_fret,
+                    "pred_fret": pred_fret,
+                    "count": count,
+                    "is_correct": true_fret == pred_fret,
+                }
+            )
+    return rows
